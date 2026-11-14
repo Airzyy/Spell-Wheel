@@ -106,16 +106,18 @@ public final class SpellWheelClient {
 
         // Lock the chosen spell on initial press. Scrolling while holding the mouse
         // does not switch the spell mid-cast.
+        boolean newlyActivated = false;
         if (activatedOption == null) {
             SpellCast.Option selected = options.get(selectedIndex);
             if (selected.mode() == SpellCast.Mode.PASSIVE) return;
             activatedOption = selected;
+            newlyActivated = true;
         }
 
-        // Spell Engine expects keyHeld to be called continuously for charged/channelled
-        // casts. Instant spells are only triggered once, on the initial press.
+        // Spell Engine expects keyHeld continuously for charged/channelled casts.
+        // Instant spells are triggered once, on the initial mouse press.
         ClientCastController controller = caster.getCastController();
-        if (activatedOption.mode() != SpellCast.Mode.INSTANT || activatedOption == options.get(selectedIndex)) {
+        if (activatedOption.mode() != SpellCast.Mode.INSTANT || newlyActivated) {
             controller.keyHeld(activatedOption, true, false);
         }
     }
