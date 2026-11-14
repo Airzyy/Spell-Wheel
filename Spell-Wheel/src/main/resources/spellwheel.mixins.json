@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.airz.spellwheel.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "HideEmptyKeyCapMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
