@@ -55,6 +55,14 @@ public final class SpellWheelClient {
     private static final ResourceLocation HOTBAR_SELECTION_SPRITE =
             ResourceLocation.withDefaultNamespace("hud/hotbar_selection");
 
+    /**
+     * NeoForge stacks HUD layers about 200 depth units apart, and RenderGuiEvent.Post fires after
+     * all of them with the depth back at 0, so anything drawn there at z=0 sits *behind* Spell
+     * Engine's layer (the depth test hides it). Lift the frame far above the whole layer stack.
+     * The GUI projection clips at about +/-10000, so stay well under that.
+     */
+    private static final float FRAME_Z = 8000.0F;
+
     /** Mirrors Spell Engine's SpellHotbar debounce so hold-to-cast / toggle-to-cast behave identically. */
     private enum Debounce { NONE, START, STOP }
 
@@ -268,8 +276,8 @@ public final class SpellWheelClient {
 
     /**
      * Draws only the selection frame, on top of Spell Engine's own hotbar. Rendered after every
-     * HUD layer (RenderGuiEvent.Post) so it can never end up behind the vanilla hotbar or
-     * Spell Engine's slots.
+     * HUD layer (RenderGuiEvent.Post) and lifted to FRAME_Z so the depth test keeps it in front of
+     * the vanilla hotbar and Spell Engine's slots.
      */
     @SubscribeEvent
     public static void onRenderGui(RenderGuiEvent.Post event) {
@@ -294,6 +302,8 @@ public final class SpellWheelClient {
         int y = (int) bar.topLeft().y;
 
         GuiGraphics graphics = event.getGuiGraphics();
+        graphics.pose().pushPose();
+        graphics.pose().translate(0.0F, 0.0F, FRAME_Z);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         if (isIronsLoaded()) {
@@ -304,6 +314,7 @@ public final class SpellWheelClient {
             graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, y - 1, 24, 23);
         }
         RenderSystem.disableBlend();
+        graphics.pose().popPose();
     }
 
     private static boolean isIronsLoaded() {
