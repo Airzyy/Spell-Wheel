@@ -14,6 +14,7 @@ import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.spell_engine.client.casting.ClientCastController;
 import net.spell_engine.client.input.Keybindings;
+import net.spell_engine.client.util.SpellRender;
 import net.spell_engine.internals.casting.SpellCast;
 import net.spell_engine.internals.casting.SpellCaster;
 
@@ -21,7 +22,7 @@ import java.util.List;
 
 @EventBusSubscriber(modid = SpellWheel.MOD_ID, value = Dist.CLIENT)
 public final class SpellWheelClient {
-    private static final int HOTBAR_SLOTS = 9;
+    private static final int VISIBLE_SLOTS = 9;
     private static final ResourceLocation HOTBAR_SPRITE =
             ResourceLocation.withDefaultNamespace("hud/hotbar");
     private static final ResourceLocation HOTBAR_SELECTION_SPRITE =
@@ -38,14 +39,18 @@ public final class SpellWheelClient {
     public static void onMouseButton(InputEvent.MouseButton.Pre event) {
         if (event.getButton() != 0) return;
 
+        Minecraft mc = Minecraft.getInstance();
+        boolean selecting = mc.player != null && mc.screen == null
+                && SpellWheelKeyRegistration.SELECT_KEY.isDown();
+
         if (event.getAction() == InputConstants.PRESS) {
-            mouseLeftDown = true;
+            mouseLeftDown = selecting;
         } else if (event.getAction() == InputConstants.RELEASE) {
             mouseLeftDown = false;
         }
 
-        // While selecting spells, left-click belongs to the spell caster, not block/entity attack.
-        if (SpellWheelKeyRegistration.SELECT_KEY.isDown()) {
+        // Prevent the normal attack/use action while the spell selector owns left-click.
+        if (selecting) {
             event.setCanceled(true);
         }
     }
@@ -79,6 +84,7 @@ public final class SpellWheelClient {
         if (mc.player == null || mc.level == null || mc.screen != null
                 || !(mc.player instanceof SpellCaster.Client caster)
                 || !SpellWheelKeyRegistration.SELECT_KEY.isDown()) {
+            mouseLeftDown = false;
             releaseActiveSpell(mc);
             return;
         }
@@ -86,23 +92,31 @@ public final class SpellWheelClient {
         List<SpellCast.Option> options = caster.getCastController().displayOptions();
         if (options.isEmpty()) {
             selectedIndex = 0;
+            mouseLeftDown = false;
             releaseActiveSpell(mc);
             return;
         }
 
         selectedIndex = Math.floorMod(selectedIndex, options.size());
 
-        // A spell is selected on the left-click press and remains the active cast until release,
-        // even if the wheel is scrolled while the mouse button is held.
-        if (mouseLeftDown && activatedOption == null) {
-            SpellCast.Option selected = options.get(selectedIndex);
-            if (selected.mode() != SpellCast.Mode.PASSIVE) {
-                ClientCastController controller = caster.getCastController();
-                activatedOption = selected;
-                controller.keyHeld(selected, true, false);
-            }
-        } else if (!mouseLeftDown) {
+        if (!mouseLeftDown) {
             releaseActiveSpell(mc);
+            return;
+        }
+
+        // Lock the chosen spell on initial press. Scrolling while holding the mouse
+        // does not switch the spell mid-cast.
+        if (activatedOption == null) {
+            SpellCast.Option selected = options.get(selectedIndex);
+            if (selected.mode() == SpellCast.Mode.PASSIVE) return;
+            activatedOption = selected;
+        }
+
+        // Spell Engine expects keyHeld to be called continuously for charged/channelled
+        // casts. Instant spells are only triggered once, on the initial press.
+        ClientCastController controller = caster.getCastController();
+        if (activatedOption.mode() != SpellCast.Mode.INSTANT || activatedOption == options.get(selectedIndex)) {
+            controller.keyHeld(activatedOption, true, false);
         }
     }
 
@@ -122,31 +136,27 @@ public final class SpellWheelClient {
         int barX = screenWidth / 2 - 91;
         int barY = screenHeight - 22;
 
-        // Use the actual vanilla hotbar sprites so the selector matches Minecraft's HUD.
+        // Vanilla hotbar frame and vanilla selected-slot highlight.
         graphics.blitSprite(HOTBAR_SPRITE, barX, barY, 182, 22);
 
-        // Cover the normal item icons while this spell selector is active.
-        for (int slot = 0; slot < HOTBAR_SLOTS; slot++) {
+        // Hide the player's item icons while this temporary spell bar is displayed.
+        for (int slot = 0; slot < VISIBLE_SLOTS; slot++) {
             graphics.fill(barX + 3 + slot * 20, barY + 3,
                     barX + 19 + slot * 20, barY + 19, 0xAA000000);
         }
 
-        int visibleCount = Math.min(HOTBAR_SLOTS, options.size());
+        int visibleCount = Math.min(VISIBLE_SLOTS, options.size());
         int firstVisible = Math.max(0, Math.min(
                 selectedIndex - visibleCount / 2, options.size() - visibleCount));
         int selectedVisibleSlot = selectedIndex - firstVisible;
 
         for (int slot = 0; slot < visibleCount; slot++) {
             SpellCast.Option option = options.get(firstVisible + slot);
-            ResourceLocation icon = ResourceLocation.fromNamespaceAndPath(
-                    option.id().getNamespace(),
-                    "textures/spell/" + option.id().getPath() + ".png");
-
+            ResourceLocation icon = SpellRender.iconTexture(option.id());
             graphics.blit(icon, barX + 3 + slot * 20, barY + 3,
                     0, 0, 16, 16, 16, 16);
         }
 
-        // Vanilla's selected-slot frame, positioned over the currently selected spell.
         graphics.blitSprite(HOTBAR_SELECTION_SPRITE,
                 barX - 1 + selectedVisibleSlot * 20, barY - 1, 24, 23);
     }
