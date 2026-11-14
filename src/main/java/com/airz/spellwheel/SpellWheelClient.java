@@ -1,191 +1,315 @@
 package com.airz.spellwheel;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.systems.RenderSystem;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvents;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.spell_engine.client.SpellEngineClient;
 import net.spell_engine.client.casting.ClientCastController;
+import net.spell_engine.client.gui.HudMessages;
+import net.spell_engine.client.gui.HudRenderHelper;
 import net.spell_engine.client.input.Keybindings;
-import net.spell_engine.client.util.SpellRender;
+import net.spell_engine.client.input.SpellHotbar;
+import net.spell_engine.client.input.WrappedKeybinding.VanillaAlternative;
+import net.spell_engine.client.util.Rect;
+import net.spell_engine.config.ClientConfig;
 import net.spell_engine.internals.casting.SpellCast;
 import net.spell_engine.internals.casting.SpellCaster;
 
+import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Spell Wheel: hold the select key, scroll to pick one of the spells on Spell Engine's own
+ * hotbar, and press the activate button to cast it.
+ *
+ * <p>Spell Engine keeps drawing its hotbar (wherever the player placed it in the HUD config);
+ * this class only draws a selection frame on top of the chosen slot and then drives the same
+ * {@link ClientCastController} / {@link HudMessages} calls that Spell Engine's own keybinds use,
+ * so cast errors (cooldown, missing mana, ...) show up exactly like they do with a keybind.
+ */
 @EventBusSubscriber(modid = SpellWheel.MOD_ID, value = Dist.CLIENT)
 public final class SpellWheelClient {
-    private static final int VISIBLE_SLOTS = 9;
-    private static final ResourceLocation HOTBAR_SPRITE =
-            ResourceLocation.withDefaultNamespace("hud/hotbar");
+    /** Spell Engine's hotbar texture is the vanilla one: 20 px per slot, 22 px tall. */
+    private static final int SLOT_PITCH = 20;
+
+    /** Slot frames from Iron's Spells 'n Spellbooks' icon sheet (selected frame is at 0,84, 22x22). */
+    private static final ResourceLocation IRONS_ICONS =
+            ResourceLocation.fromNamespaceAndPath("irons_spellbooks", "textures/gui/icons.png");
+    private static final int IRONS_SELECTED_U = 0;
+    private static final int IRONS_SELECTED_V = 84;
+    private static final int IRONS_FRAME_SIZE = 22;
+
+    /** Fallback when Iron's Spells is not installed. */
     private static final ResourceLocation HOTBAR_SELECTION_SPRITE =
             ResourceLocation.withDefaultNamespace("hud/hotbar_selection");
 
-    private static int selectedIndex = 0;
-    private static boolean mouseLeftDown = false;
-    private static SpellCast.Option activatedOption = null;
-    private static boolean legacyKeysDisabled = false;
+    /** Mirrors Spell Engine's SpellHotbar debounce so hold-to-cast / toggle-to-cast behave identically. */
+    private enum Debounce { NONE, START, STOP }
+
+    /** Position inside the list of selectable slots (not an index into the raw slot list). */
+    private static int selected = 0;
+    private static boolean activateHeld = false;
+    private static SpellCast.Option activeOption = null;
+    private static Debounce debounce = Debounce.NONE;
+    private static boolean attemptReported = false;
+    private static Boolean ironsLoaded = null;
 
     private SpellWheelClient() { }
 
+    // ------------------------------------------------------------------------------------
+    // Input
+    // ------------------------------------------------------------------------------------
+
     @SubscribeEvent
     public static void onMouseButton(InputEvent.MouseButton.Pre event) {
-        if (event.getButton() != 0) return;
+        if (!matchesActivate(InputConstants.Type.MOUSE, event.getButton())) return;
 
-        Minecraft mc = Minecraft.getInstance();
-        boolean selecting = mc.player != null && mc.screen == null
-                && SpellWheelKeyRegistration.SELECT_KEY.isDown();
+        boolean selecting = isSelecting(Minecraft.getInstance());
+        if (event.getAction() == InputConstants.PRESS) {
+            if (selecting) {
+                activateHeld = true;
+                // Swallow the click so it does not also attack / break blocks.
+                event.setCanceled(true);
+            }
+        } else if (event.getAction() == InputConstants.RELEASE) {
+            activateHeld = false;
+            if (selecting) event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onKey(InputEvent.Key event) {
+        if (!matchesActivate(InputConstants.Type.KEYSYM, event.getKey())) return;
 
         if (event.getAction() == InputConstants.PRESS) {
-            mouseLeftDown = selecting;
+            if (isSelecting(Minecraft.getInstance())) activateHeld = true;
         } else if (event.getAction() == InputConstants.RELEASE) {
-            mouseLeftDown = false;
-        }
-
-        // Prevent the normal attack/use action while the spell selector owns left-click.
-        if (selecting) {
-            event.setCanceled(true);
+            activateHeld = false;
         }
     }
 
     @SubscribeEvent
     public static void onScroll(InputEvent.MouseScrollingEvent event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.screen != null
-                || !SpellWheelKeyRegistration.SELECT_KEY.isDown()) return;
+        if (!isSelecting(mc)) return;
 
-        List<SpellCast.Option> options = currentOptions(mc);
-        if (options.isEmpty()) return;
+        List<Integer> selectable = selectableSlots();
+        if (selectable.isEmpty()) return;
 
         double amount = event.getScrollDeltaY();
         if (amount == 0) return;
 
-        selectedIndex = Math.floorMod(selectedIndex + (amount > 0 ? -1 : 1), options.size());
+        selected = Math.floorMod(selected + (amount > 0 ? -1 : 1), selectable.size());
         mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.15F));
         event.setCanceled(true);
     }
+
+    private static boolean matchesActivate(InputConstants.Type type, int value) {
+        InputConstants.Key bound = SpellWheelKeyRegistration.ACTIVATE_KEY.getKey();
+        return bound.getType() == type && bound.getValue() == value;
+    }
+
+    private static boolean isSelecting(Minecraft mc) {
+        return mc.player != null && mc.level != null && mc.screen == null
+                && SpellWheelKeyRegistration.SELECT_KEY.isDown();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Casting
+    // ------------------------------------------------------------------------------------
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
 
-        if (!legacyKeysDisabled) {
-            disableLegacySpellKeys();
-            legacyKeysDisabled = true;
-        }
+        neutralizeSpellEngineKeyCasting();
 
-        if (mc.player == null || mc.level == null || mc.screen != null
-                || !(mc.player instanceof SpellCaster.Client caster)
-                || !SpellWheelKeyRegistration.SELECT_KEY.isDown()) {
-            mouseLeftDown = false;
+        if (!isSelecting(mc) || !(mc.player instanceof SpellCaster.Client caster)) {
+            activateHeld = false;
             releaseActiveSpell(mc);
             return;
         }
 
-        List<SpellCast.Option> options = caster.getCastController().displayOptions();
-        if (options.isEmpty()) {
-            selectedIndex = 0;
-            mouseLeftDown = false;
+        List<Integer> selectable = selectableSlots();
+        if (selectable.isEmpty()) {
+            activateHeld = false;
+            releaseActiveSpell(mc);
+            return;
+        }
+        selected = Math.floorMod(selected, selectable.size());
+
+        if (!activateHeld || mc.player.isSpectator()) {
             releaseActiveSpell(mc);
             return;
         }
 
-        selectedIndex = Math.floorMod(selectedIndex, options.size());
-
-        if (!mouseLeftDown) {
-            releaseActiveSpell(mc);
-            return;
+        // Lock the chosen spell on the initial press; scrolling mid-cast does not switch it.
+        boolean newPress = activeOption == null;
+        if (newPress) {
+            activeOption = SpellHotbar.INSTANCE.slots.get(selectable.get(selected)).option();
+            debounce = Debounce.NONE;
+            attemptReported = false;
         }
+        SpellCast.Option option = activeOption;
 
-        // Lock the chosen spell on initial press. Scrolling while holding the mouse
-        // does not switch the spell mid-cast.
-        boolean newlyActivated = false;
-        if (activatedOption == null) {
-            SpellCast.Option selected = options.get(selectedIndex);
-            if (selected.mode() == SpellCast.Mode.PASSIVE) return;
-            activatedOption = selected;
-            newlyActivated = true;
-        }
+        // Instant spells fire once per press; charged / channelled / cast-time spells need
+        // keyHeld every tick, exactly like Spell Engine's own hotbar handling.
+        if (option.mode() == SpellCast.Mode.INSTANT && !newPress) return;
 
-        // Spell Engine expects keyHeld continuously for charged/channelled casts.
-        // Instant spells are triggered once, on the initial mouse press.
         ClientCastController controller = caster.getCastController();
-        if (activatedOption.mode() != SpellCast.Mode.INSTANT || newlyActivated) {
-            controller.keyHeld(activatedOption, true, false);
+        ClientCastController.Reaction reaction = controller.keyHeld(
+                option, debounce != Debounce.STOP, debounce != Debounce.START);
+
+        switch (reaction.type()) {
+            case STARTED -> {
+                debounce = Debounce.START;
+                reportAttempt(reaction.attempt());
+            }
+            case STOPPED, RELEASED -> debounce = Debounce.STOP;
+            default -> { }
         }
     }
 
-    @SubscribeEvent
-    public static void onRenderGui(RenderGuiEvent.Post event) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.screen != null || mc.options.hideGui
-                || !SpellWheelKeyRegistration.SELECT_KEY.isDown()
-                || !(mc.player instanceof SpellCaster.Client caster)) return;
-
-        List<SpellCast.Option> options = caster.getCastController().displayOptions();
-        if (options.isEmpty()) return;
-
-        GuiGraphics graphics = event.getGuiGraphics();
-        int screenWidth = graphics.guiWidth();
-        int screenHeight = graphics.guiHeight();
-        int barX = screenWidth / 2 - 91;
-        int barY = screenHeight - 22;
-
-        // Vanilla hotbar frame and vanilla selected-slot highlight.
-        graphics.blitSprite(HOTBAR_SPRITE, barX, barY, 182, 22);
-
-        // Hide the player's item icons while this temporary spell bar is displayed.
-        for (int slot = 0; slot < VISIBLE_SLOTS; slot++) {
-            graphics.fill(barX + 3 + slot * 20, barY + 3,
-                    barX + 19 + slot * 20, barY + 19, 0xAA000000);
+    /**
+     * Same as Spell Engine's SpellHotbar#displayAttempt: a failed attempt goes through
+     * HudMessages#castAttemptError, which draws the "on cooldown" / "missing mana" message and
+     * which other mods (e.g. RunelessRPG's mana flash) hook into.
+     */
+    private static void reportAttempt(SpellCast.Attempt attempt) {
+        if (attempt == null || attemptReported) return;
+        attemptReported = true;
+        if (attempt.isFail()) {
+            HudMessages.INSTANCE.castAttemptError(attempt);
         }
-
-        int visibleCount = Math.min(VISIBLE_SLOTS, options.size());
-        int firstVisible = Math.max(0, Math.min(
-                selectedIndex - visibleCount / 2, options.size() - visibleCount));
-        int selectedVisibleSlot = selectedIndex - firstVisible;
-
-        for (int slot = 0; slot < visibleCount; slot++) {
-            SpellCast.Option option = options.get(firstVisible + slot);
-            ResourceLocation icon = SpellRender.iconTexture(option.id());
-            graphics.blit(icon, barX + 3 + slot * 20, barY + 3,
-                    0, 0, 16, 16, 16, 16);
-        }
-
-        graphics.blitSprite(HOTBAR_SELECTION_SPRITE,
-                barX - 1 + selectedVisibleSlot * 20, barY - 1, 24, 23);
     }
 
     private static void releaseActiveSpell(Minecraft mc) {
-        if (activatedOption != null && mc.player instanceof SpellCaster.Client caster) {
-            caster.getCastController().keyUp(activatedOption);
+        if (activeOption != null && mc.player instanceof SpellCaster.Client caster) {
+            caster.getCastController().keyUp(activeOption);
         }
-        activatedOption = null;
+        activeOption = null;
+        debounce = Debounce.NONE;
+        attemptReported = false;
     }
 
-    private static void disableLegacySpellKeys() {
-        Keybindings.spell_hotbar_1.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_2.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_3.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_4.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_5.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_6.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_7.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_8.setKey(InputConstants.UNKNOWN);
-        Keybindings.spell_hotbar_9.setKey(InputConstants.UNKNOWN);
+    /**
+     * Slots the wheel can land on: real spells on Spell Engine's hotbar. Indices refer to
+     * SpellHotbar.INSTANCE.slots, i.e. exactly what Spell Engine draws (this includes the
+     * item-use slot, which is skipped here but still occupies a position on the bar).
+     */
+    private static List<Integer> selectableSlots() {
+        List<SpellHotbar.Slot> slots = SpellHotbar.INSTANCE.slots;
+        List<Integer> result = new ArrayList<>(slots.size());
+        for (int i = 0; i < slots.size(); i++) {
+            SpellHotbar.Slot slot = slots.get(i);
+            if (slot == null) continue;
+            SpellCast.Option option = slot.option();
+            if (option != null && option.mode() != SpellCast.Mode.PASSIVE) {
+                result.add(i);
+            }
+        }
+        return result;
     }
 
-    private static List<SpellCast.Option> currentOptions(Minecraft mc) {
-        if (mc.player instanceof SpellCaster.Client caster) {
-            return caster.getCastController().displayOptions();
+    // ------------------------------------------------------------------------------------
+    // Replace Spell Engine's own keybind casting
+    // ------------------------------------------------------------------------------------
+
+    /**
+     * Spell Engine casts hotbar spells from its own keybinds, from the vanilla number keys
+     * (spell_hotbar_N_defer) and from the use key (spellHotbarUseKey). Turn all of those off
+     * so the select + activate buttons are the only way to cast from the hotbar.
+     */
+    private static void neutralizeSpellEngineKeyCasting() {
+        KeyMapping[] keys = {
+                Keybindings.spell_hotbar_1, Keybindings.spell_hotbar_2, Keybindings.spell_hotbar_3,
+                Keybindings.spell_hotbar_4, Keybindings.spell_hotbar_5, Keybindings.spell_hotbar_6,
+                Keybindings.spell_hotbar_7, Keybindings.spell_hotbar_8, Keybindings.spell_hotbar_9
+        };
+        boolean changed = false;
+        for (KeyMapping key : keys) {
+            if (!key.isUnbound()) {
+                key.setKey(InputConstants.UNKNOWN);
+                changed = true;
+            }
         }
-        return List.of();
+        if (changed) KeyMapping.resetMapping();
+
+        ClientConfig config = SpellEngineClient.config;
+        if (config != null) {
+            config.spell_hotbar_1_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_2_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_3_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_4_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_5_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_6_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_7_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_8_defer = VanillaAlternative.NONE;
+            config.spell_hotbar_9_defer = VanillaAlternative.NONE;
+            config.spellHotbarUseKey = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Rendering
+    // ------------------------------------------------------------------------------------
+
+    /**
+     * Draws only the selection frame, on top of Spell Engine's own hotbar. Rendered after every
+     * HUD layer (RenderGuiEvent.Post) so it can never end up behind the vanilla hotbar or
+     * Spell Engine's slots.
+     */
+    @SubscribeEvent
+    public static void onRenderGui(RenderGuiEvent.Post event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.options.hideGui || !isSelecting(mc) || mc.player.isSpectator()) return;
+
+        List<SpellHotbar.Slot> slots = SpellHotbar.INSTANCE.slots;
+        Rect bar = HudRenderHelper.SpellHotBarWidget.lastRendered;
+        if (slots.isEmpty() || bar == null) return;
+
+        // Spell Engine sizes its bar as 20 px per slot; if the last rendered rect does not match
+        // the current slot list, the bar is stale (not drawn this frame), so draw nothing.
+        float expectedWidth = SLOT_PITCH * slots.size();
+        if (Math.abs((bar.bottomRight().x - bar.topLeft().x) - expectedWidth) > 1.0F) return;
+
+        List<Integer> selectable = selectableSlots();
+        if (selectable.isEmpty()) return;
+        int slotIndex = selectable.get(Math.floorMod(selected, selectable.size()));
+
+        // Same integer origin Spell Engine uses when it blits the bar.
+        int x = (int) bar.topLeft().x + slotIndex * SLOT_PITCH;
+        int y = (int) bar.topLeft().y;
+
+        GuiGraphics graphics = event.getGuiGraphics();
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        if (isIronsLoaded()) {
+            // The 22x22 frame lines up with Spell Engine's slot: icon sits 3 px inside it.
+            graphics.blit(IRONS_ICONS, x, y,
+                    IRONS_SELECTED_U, IRONS_SELECTED_V, IRONS_FRAME_SIZE, IRONS_FRAME_SIZE);
+        } else {
+            graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, y - 1, 24, 23);
+        }
+        RenderSystem.disableBlend();
+    }
+
+    private static boolean isIronsLoaded() {
+        if (ironsLoaded == null) {
+            ironsLoaded = ModList.get().isLoaded("irons_spellbooks");
+        }
+        return ironsLoaded;
     }
 }

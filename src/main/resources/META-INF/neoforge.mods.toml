@@ -4,10 +4,13 @@ license="MIT"
 
 [[mods]]
 modId="spellwheel"
-version="1.0.0"
+version="1.1.0"
 displayName="Spell Wheel"
 authors="Airz"
-description='''Hold Left Alt and scroll to choose a Spell Engine spell, then press R to cast it.'''
+description='''Hold Left Alt and scroll to choose a spell on the Spell Engine hotbar, then click (or press your Activate button) to cast it. Replaces Spell Engine's per-slot keybinds.'''
+
+[[mixins]]
+config="spellwheel.mixins.json"
 
 [[dependencies.spellwheel]]
 modId="neoforge"
