@@ -22,6 +22,7 @@ import net.spell_engine.client.gui.HudMessages;
 import net.spell_engine.client.gui.HudRenderHelper;
 import net.spell_engine.client.input.Keybindings;
 import net.spell_engine.client.input.SpellHotbar;
+import net.spell_engine.client.util.SpellRender;
 import net.spell_engine.client.input.WrappedKeybinding.VanillaAlternative;
 import net.spell_engine.client.util.Rect;
 import net.spell_engine.config.ClientConfig;
@@ -399,9 +400,13 @@ public final class SpellWheelClient {
                 graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, top - 1, 24, 23);
             }
             SpellHotbar.Slot slot = slots.get(selectable.get(i));
-            ItemStack icon = slot.itemStack();
-            if (icon != null && !icon.isEmpty()) {
-                graphics.renderItem(icon, x + 3, top + 3);
+            ItemStack itemIcon = slot.itemStack();
+            if (itemIcon != null && !itemIcon.isEmpty()) {
+                graphics.renderItem(itemIcon, x + 3, top + 3);
+            } else if (slot.spell() != null && slot.spell().getKey().isPresent()) {
+                ResourceLocation spellId = slot.spell().getKey().get().location();
+                ResourceLocation iconTexture = SpellRender.iconTexture(spellId);
+                graphics.blit(iconTexture, x + 3, top + 3, 0, 0, 16, 16, 16, 16);
             }
         }
         graphics.pose().popPose();
