@@ -7,6 +7,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.sounds.SoundEvents;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -73,6 +74,10 @@ public final class SpellWheelClient {
     private static Debounce debounce = Debounce.NONE;
     private static boolean attemptReported = false;
     private static Boolean ironsLoaded = null;
+    private static boolean originalKeysCaptured = false;
+    private static InputConstants.Key[] originalSpellKeys;
+    private static VanillaAlternative[] originalDeferrals;
+    private static boolean originalUseKeyCasting;
 
     private SpellWheelClient() { }
 
@@ -141,6 +146,13 @@ public final class SpellWheelClient {
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
+
+        if (!SpellWheelConfig.isEnabled()) {
+            activateHeld = false;
+            releaseActiveSpell(mc);
+            restoreSpellEngineKeyCasting();
+            return;
+        }
 
         neutralizeSpellEngineKeyCasting();
 
@@ -257,6 +269,7 @@ public final class SpellWheelClient {
 
         ClientConfig config = SpellEngineClient.config;
         if (config != null) {
+            captureOriginalSpellEngineKeyCasting(config);
             config.spell_hotbar_1_defer = VanillaAlternative.NONE;
             config.spell_hotbar_2_defer = VanillaAlternative.NONE;
             config.spell_hotbar_3_defer = VanillaAlternative.NONE;
@@ -282,7 +295,7 @@ public final class SpellWheelClient {
     @SubscribeEvent
     public static void onRenderGui(RenderGuiEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.options.hideGui || !isSelecting(mc) || mc.player.isSpectator()) return;
+        if (!SpellWheelConfig.isEnabled() || mc.options.hideGui || !isSelecting(mc) || mc.player.isSpectator()) return;
 
         List<SpellHotbar.Slot> slots = SpellHotbar.INSTANCE.slots;
         Rect bar = HudRenderHelper.SpellHotBarWidget.lastRendered;
@@ -314,6 +327,35 @@ public final class SpellWheelClient {
             graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, y - 1, 24, 23);
         }
         RenderSystem.disableBlend();
+        graphics.pose().popPose();
+
+        if (SpellWheelConfig.showPreviewBelowCrosshair()) {
+            renderPreviewBelowCrosshair(graphics, mc, slots, selectable, selected);
+        }
+    }
+
+    private static void renderPreviewBelowCrosshair(GuiGraphics graphics, Minecraft mc,
+                                                     List<SpellHotbar.Slot> slots,
+                                                     List<Integer> selectable, int selectedIndex) {
+        int count = selectable.size();
+        int slotSize = 22;
+        int gap = 2;
+        int totalWidth = count * slotSize + Math.max(0, count - 1) * gap;
+        int left = (mc.getWindow().getGuiScaledWidth() - totalWidth) / 2;
+        int top = mc.getWindow().getGuiScaledHeight() / 2 + 14;
+        graphics.pose().pushPose();
+        graphics.pose().translate(0.0F, 0.0F, FRAME_Z);
+        for (int i = 0; i < count; i++) {
+            int x = left + i * (slotSize + gap);
+            if (i == Math.floorMod(selectedIndex, count)) {
+                graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, top - 1, 24, 23);
+            }
+            SpellHotbar.Slot slot = slots.get(selectable.get(i));
+            ItemStack icon = slot.itemStack();
+            if (icon != null && !icon.isEmpty()) {
+                graphics.renderItem(icon, x + 3, top + 3);
+            }
+        }
         graphics.pose().popPose();
     }
 
