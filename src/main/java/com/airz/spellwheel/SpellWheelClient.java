@@ -403,8 +403,8 @@ public final class SpellWheelClient {
             ItemStack itemIcon = slot.itemStack();
             if (itemIcon != null && !itemIcon.isEmpty()) {
                 graphics.renderItem(itemIcon, x + 3, top + 3);
-            } else if (slot.spell() != null && slot.spell().getKey().isPresent()) {
-                ResourceLocation spellId = slot.spell().getKey().get().location();
+            } else if (slot.spell() != null) {
+                ResourceLocation spellId = slot.spell().getKey().location();
                 ResourceLocation iconTexture = SpellRender.iconTexture(spellId);
                 graphics.blit(iconTexture, x + 3, top + 3, 0, 0, 16, 16, 16, 16);
             }
