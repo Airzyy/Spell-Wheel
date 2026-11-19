@@ -88,7 +88,7 @@ public final class SpellWheelClient {
 
     @SubscribeEvent
     public static void onMouseButton(InputEvent.MouseButton.Pre event) {
-        if (!matchesActivate(InputConstants.Type.MOUSE, event.getButton())) return;
+        if (!SpellWheelConfig.isEnabled() || !matchesActivate(InputConstants.Type.MOUSE, event.getButton())) return;
 
         boolean selecting = isSelecting(Minecraft.getInstance());
         if (event.getAction() == InputConstants.PRESS) {
@@ -105,7 +105,7 @@ public final class SpellWheelClient {
 
     @SubscribeEvent
     public static void onKey(InputEvent.Key event) {
-        if (!matchesActivate(InputConstants.Type.KEYSYM, event.getKey())) return;
+        if (!SpellWheelConfig.isEnabled() || !matchesActivate(InputConstants.Type.KEYSYM, event.getKey())) return;
 
         if (event.getAction() == InputConstants.PRESS) {
             if (isSelecting(Minecraft.getInstance())) activateHeld = true;
