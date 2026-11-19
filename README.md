@@ -12,6 +12,10 @@ single "hold to select" button.
 
 Both controls can be changed in Minecraft's Controls menu under the **Spell Wheel** category.
 
+## Configuration
+- **Enabled** toggles Spell Wheel on or off. Turning it off restores Spell Engine's original spell keybind behavior.
+- **Show Preview Below Crosshair** displays a compact row of the available spell icons beneath the crosshair while selecting. The original Spell Engine hotbar remains in its configured HUD position.
+
 ## How it works
 - Spell Engine keeps drawing its own hotbar, wherever your HUD config puts it. Spell Wheel only
   draws a selection frame over the chosen slot, after every other HUD layer. If Iron's Spells 'n
