@@ -106,8 +106,19 @@ public final class SpellWheelClient {
 
     @SubscribeEvent
     public static void onKey(InputEvent.Key event) {
-        if (!SpellWheelConfig.isEnabled() || !matchesActivate(InputConstants.Type.KEYSYM, event.getKey())) return;
+        if (!SpellWheelConfig.isEnabled()) return;
 
+        // Block Spell Engine's own spell key mappings without changing their assigned keys.
+        // This avoids permanently saving UNKNOWN bindings to options.txt.
+        for (KeyMapping key : spellEngineKeys()) {
+            InputConstants.Key bound = key.getKey();
+            if (bound.getType() == InputConstants.Type.KEYSYM && bound.getValue() == event.getKey()) {
+                event.setCanceled(true);
+                break;
+            }
+        }
+
+        if (!matchesActivate(InputConstants.Type.KEYSYM, event.getKey())) return;
         if (event.getAction() == InputConstants.PRESS) {
             if (isSelecting(Minecraft.getInstance())) activateHeld = true;
         } else if (event.getAction() == InputConstants.RELEASE) {
@@ -256,33 +267,22 @@ public final class SpellWheelClient {
      */
     private static void neutralizeSpellEngineKeyCasting() {
         ClientConfig config = SpellEngineClient.config;
-        if (config != null) captureOriginalSpellEngineKeyCasting(config);
-        KeyMapping[] keys = {
-                Keybindings.spell_hotbar_1, Keybindings.spell_hotbar_2, Keybindings.spell_hotbar_3,
-                Keybindings.spell_hotbar_4, Keybindings.spell_hotbar_5, Keybindings.spell_hotbar_6,
-                Keybindings.spell_hotbar_7, Keybindings.spell_hotbar_8, Keybindings.spell_hotbar_9
-        };
-        boolean changed = false;
-        for (KeyMapping key : keys) {
-            if (!key.isUnbound()) {
-                key.setKey(InputConstants.UNKNOWN);
-                changed = true;
-            }
-        }
-        if (changed) KeyMapping.resetMapping();
+        if (config == null) return;
+        captureOriginalSpellEngineKeyCasting(config);
 
-        if (config != null) {
-            config.spell_hotbar_1_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_2_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_3_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_4_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_5_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_6_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_7_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_8_defer = VanillaAlternative.NONE;
-            config.spell_hotbar_9_defer = VanillaAlternative.NONE;
-            config.spellHotbarUseKey = false;
-        }
+        // Keep the vanilla-number-key deferrals and use-key route disabled while the wheel
+        // is active. The individual Spell Engine key mappings themselves are blocked in onKey
+        // rather than being rebound to UNKNOWN.
+        config.spell_hotbar_1_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_2_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_3_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_4_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_5_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_6_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_7_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_8_defer = VanillaAlternative.NONE;
+        config.spell_hotbar_9_defer = VanillaAlternative.NONE;
+        config.spellHotbarUseKey = false;
     }
 
     private static void captureOriginalSpellEngineKeyCasting(ClientConfig config) {
