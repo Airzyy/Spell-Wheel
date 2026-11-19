@@ -417,6 +417,13 @@ public final class SpellWheelClient {
             int x = centerX - slotSize / 2 + Math.round(relative * pitch);
             if (x < -slotSize || x > mc.getWindow().getGuiScaledWidth()) continue;
 
+            // Smoothly brighten each icon as it approaches the center, rather than switching
+            // brightness only after it has finished scrolling into the selected position.
+            float proximity = Math.max(0.0F, Math.min(1.0F, 1.0F - Math.abs(relative) / 1.6F));
+            proximity = proximity * proximity * (3.0F - 2.0F * proximity);
+            float brightness = 0.42F + 0.58F * proximity;
+            RenderSystem.setShaderColor(brightness, brightness, brightness, 1.0F);
+
             SpellHotbar.Slot slot = slots.get(selectable.get(i));
             ItemStack itemIcon = slot.itemStack();
             if (itemIcon != null && !itemIcon.isEmpty()) {
@@ -427,10 +434,8 @@ public final class SpellWheelClient {
                 graphics.blit(iconTexture, x + 3, top + 3, 0, 0, 16, 16, 16, 16);
             }
 
-            // Dim the non-selected icons; the selected icon has no frame or background.
-            if (Math.abs(relative) > 0.01F) {
-                graphics.fill(x + 2, top + 2, x + 20, top + 20, 0x99000000);
-            }
+            // Restore the normal tint before rendering the next icon or any other HUD element.
+            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
         }
         graphics.pose().popPose();
     }
