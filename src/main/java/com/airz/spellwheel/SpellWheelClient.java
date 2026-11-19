@@ -348,36 +348,34 @@ public final class SpellWheelClient {
         if (!SpellWheelConfig.isEnabled() || mc.options.hideGui || !isSelecting(mc) || mc.player.isSpectator()) return;
 
         List<SpellHotbar.Slot> slots = SpellHotbar.INSTANCE.slots;
-        Rect bar = HudRenderHelper.SpellHotBarWidget.lastRendered;
-        if (slots.isEmpty() || bar == null) return;
-
-        // Spell Engine sizes its bar as 20 px per slot; if the last rendered rect does not match
-        // the current slot list, the bar is stale (not drawn this frame), so draw nothing.
-        float expectedWidth = SLOT_PITCH * slots.size();
-        if (Math.abs((bar.bottomRight().x - bar.topLeft().x) - expectedWidth) > 1.0F) return;
+        if (slots.isEmpty()) return;
 
         List<Integer> selectable = selectableSlots();
         if (selectable.isEmpty()) return;
         int slotIndex = selectable.get(Math.floorMod(selected, selectable.size()));
-
-        // Same integer origin Spell Engine uses when it blits the bar.
-        int x = (int) bar.topLeft().x + slotIndex * SLOT_PITCH;
-        int y = (int) bar.topLeft().y;
-
         GuiGraphics graphics = event.getGuiGraphics();
-        graphics.pose().pushPose();
-        graphics.pose().translate(0.0F, 0.0F, FRAME_Z);
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        if (isIronsLoaded()) {
-            // The 22x22 frame lines up with Spell Engine's slot: icon sits 3 px inside it.
-            graphics.blit(IRONS_ICONS, x, y,
-                    IRONS_SELECTED_U, IRONS_SELECTED_V, IRONS_FRAME_SIZE, IRONS_FRAME_SIZE);
-        } else {
-            graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, y - 1, 24, 23);
+
+        // Draw the highlight over Spell Engine's left-side bar when that bar was rendered this frame.
+        Rect bar = HudRenderHelper.SpellHotBarWidget.lastRendered;
+        if (bar != null) {
+            float expectedWidth = SLOT_PITCH * slots.size();
+            if (Math.abs((bar.bottomRight().x - bar.topLeft().x) - expectedWidth) <= 1.0F) {
+                int x = (int) bar.topLeft().x + slotIndex * SLOT_PITCH;
+                int y = (int) bar.topLeft().y;
+                graphics.pose().pushPose();
+                graphics.pose().translate(0.0F, 0.0F, FRAME_Z);
+                RenderSystem.enableBlend();
+                RenderSystem.defaultBlendFunc();
+                if (isIronsLoaded()) {
+                    graphics.blit(IRONS_ICONS, x, y,
+                            IRONS_SELECTED_U, IRONS_SELECTED_V, IRONS_FRAME_SIZE, IRONS_FRAME_SIZE);
+                } else {
+                    graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, y - 1, 24, 23);
+                }
+                RenderSystem.disableBlend();
+                graphics.pose().popPose();
+            }
         }
-        RenderSystem.disableBlend();
-        graphics.pose().popPose();
 
         if (SpellWheelConfig.showPreviewBelowCrosshair()) {
             renderPreviewBelowCrosshair(graphics, mc, slots, selectable, selected);
