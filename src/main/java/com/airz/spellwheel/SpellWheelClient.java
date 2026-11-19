@@ -108,16 +108,6 @@ public final class SpellWheelClient {
     public static void onKey(InputEvent.Key event) {
         if (!SpellWheelConfig.isEnabled()) return;
 
-        // Block Spell Engine's own spell key mappings without changing their assigned keys.
-        // This avoids permanently saving UNKNOWN bindings to options.txt.
-        for (KeyMapping key : spellEngineKeys()) {
-            InputConstants.Key bound = key.getKey();
-            if (bound.getType() == InputConstants.Type.KEYSYM && bound.getValue() == event.getKey()) {
-                event.setCanceled(true);
-                break;
-            }
-        }
-
         if (!matchesActivate(InputConstants.Type.KEYSYM, event.getKey())) return;
         if (event.getAction() == InputConstants.PRESS) {
             if (isSelecting(Minecraft.getInstance())) activateHeld = true;
@@ -270,9 +260,17 @@ public final class SpellWheelClient {
         if (config == null) return;
         captureOriginalSpellEngineKeyCasting(config);
 
-        // Keep the vanilla-number-key deferrals and use-key route disabled while the wheel
-        // is active. The individual Spell Engine key mappings themselves are blocked in onKey
-        // rather than being rebound to UNKNOWN.
+        // Temporarily unbind Spell Engine's individual spell keys while the wheel is active.
+        // Their exact original keys are snapshotted once and restored when the config is disabled.
+        boolean changed = false;
+        for (KeyMapping key : spellEngineKeys()) {
+            if (!key.getKey().equals(InputConstants.UNKNOWN)) {
+                key.setKey(InputConstants.UNKNOWN);
+                changed = true;
+            }
+        }
+        if (changed) KeyMapping.resetMapping();
+
         config.spell_hotbar_1_defer = VanillaAlternative.NONE;
         config.spell_hotbar_2_defer = VanillaAlternative.NONE;
         config.spell_hotbar_3_defer = VanillaAlternative.NONE;
