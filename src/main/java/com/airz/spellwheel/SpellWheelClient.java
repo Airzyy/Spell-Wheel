@@ -76,6 +76,7 @@ public final class SpellWheelClient {
     private static boolean attemptReported = false;
     private static Boolean ironsLoaded = null;
     private static boolean originalKeysCaptured = false;
+    private static float previewPosition = Float.NaN;
     private static InputConstants.Key[] originalSpellKeys;
     private static VanillaAlternative[] originalDeferrals;
     private static boolean originalUseKeyCasting;
@@ -323,7 +324,6 @@ public final class SpellWheelClient {
             config.spell_hotbar_9_defer = originalDeferrals[8];
             config.spellHotbarUseKey = originalUseKeyCasting;
         }
-        originalKeysCaptured = false;
     }
 
     private static KeyMapping[] spellEngineKeys() {
@@ -378,7 +378,7 @@ public final class SpellWheelClient {
             }
         }
 
-        if (SpellWheelConfig.showPreviewBelowCrosshair()) {
+        if (SpellWheelConfig.showPreviewBelowCrosshair() && !activateHeld && activeOption == null) {
             renderPreviewBelowCrosshair(graphics, mc, slots, selectable, selected);
         }
     }
@@ -387,18 +387,38 @@ public final class SpellWheelClient {
                                                      List<SpellHotbar.Slot> slots,
                                                      List<Integer> selectable, int selectedIndex) {
         int count = selectable.size();
+        if (count == 0) return;
+
+        // Ease the row toward the selected slot so it settles directly under the crosshair.
+        float target = Math.floorMod(selectedIndex, count);
+        if (Float.isNaN(previewPosition)) {
+            previewPosition = target;
+        } else {
+            float delta = target - previewPosition;
+            if (count > 1) {
+                if (delta > count / 2.0F) delta -= count;
+                if (delta < -count / 2.0F) delta += count;
+            }
+            previewPosition += delta * 0.28F;
+            if (Math.abs(delta) < 0.01F) previewPosition = target;
+        }
+
         int slotSize = 22;
-        int gap = 2;
-        int totalWidth = count * slotSize + Math.max(0, count - 1) * gap;
-        int left = (mc.getWindow().getGuiScaledWidth() - totalWidth) / 2;
+        int pitch = 26;
+        int centerX = mc.getWindow().getGuiScaledWidth() / 2;
         int top = mc.getWindow().getGuiScaledHeight() / 2 + 14;
+
         graphics.pose().pushPose();
         graphics.pose().translate(0.0F, 0.0F, FRAME_Z);
         for (int i = 0; i < count; i++) {
-            int x = left + i * (slotSize + gap);
-            if (i == Math.floorMod(selectedIndex, count)) {
-                graphics.blitSprite(HOTBAR_SELECTION_SPRITE, x - 1, top - 1, 24, 23);
+            float relative = i - previewPosition;
+            if (count > 1) {
+                if (relative > count / 2.0F) relative -= count;
+                if (relative < -count / 2.0F) relative += count;
             }
+            int x = centerX - slotSize / 2 + Math.round(relative * pitch);
+            if (x < -slotSize || x > mc.getWindow().getGuiScaledWidth()) continue;
+
             SpellHotbar.Slot slot = slots.get(selectable.get(i));
             ItemStack itemIcon = slot.itemStack();
             if (itemIcon != null && !itemIcon.isEmpty()) {
@@ -407,6 +427,11 @@ public final class SpellWheelClient {
                 ResourceLocation spellId = slot.spell().getKey().location();
                 ResourceLocation iconTexture = SpellRender.iconTexture(spellId);
                 graphics.blit(iconTexture, x + 3, top + 3, 0, 0, 16, 16, 16, 16);
+            }
+
+            // Dim the non-selected icons; the selected icon has no frame or background.
+            if (Math.abs(relative) > 0.01F) {
+                graphics.fill(x + 2, top + 2, x + 20, top + 20, 0x99000000);
             }
         }
         graphics.pose().popPose();
