@@ -135,7 +135,7 @@ public final class SpellWheelClient {
     }
 
     private static boolean isSelecting(Minecraft mc) {
-        return mc.player != null && mc.level != null && mc.screen == null
+        return SpellWheelConfig.isEnabled() && mc.player != null && mc.level != null && mc.screen == null
                 && SpellWheelKeyRegistration.SELECT_KEY.isDown();
     }
 
@@ -253,6 +253,8 @@ public final class SpellWheelClient {
      * so the select + activate buttons are the only way to cast from the hotbar.
      */
     private static void neutralizeSpellEngineKeyCasting() {
+        ClientConfig config = SpellEngineClient.config;
+        if (config != null) captureOriginalSpellEngineKeyCasting(config);
         KeyMapping[] keys = {
                 Keybindings.spell_hotbar_1, Keybindings.spell_hotbar_2, Keybindings.spell_hotbar_3,
                 Keybindings.spell_hotbar_4, Keybindings.spell_hotbar_5, Keybindings.spell_hotbar_6,
@@ -267,9 +269,7 @@ public final class SpellWheelClient {
         }
         if (changed) KeyMapping.resetMapping();
 
-        ClientConfig config = SpellEngineClient.config;
         if (config != null) {
-            captureOriginalSpellEngineKeyCasting(config);
             config.spell_hotbar_1_defer = VanillaAlternative.NONE;
             config.spell_hotbar_2_defer = VanillaAlternative.NONE;
             config.spell_hotbar_3_defer = VanillaAlternative.NONE;
@@ -281,6 +281,56 @@ public final class SpellWheelClient {
             config.spell_hotbar_9_defer = VanillaAlternative.NONE;
             config.spellHotbarUseKey = false;
         }
+    }
+
+    private static void captureOriginalSpellEngineKeyCasting(ClientConfig config) {
+        if (originalKeysCaptured) return;
+        KeyMapping[] keys = spellEngineKeys();
+        originalSpellKeys = new InputConstants.Key[keys.length];
+        for (int i = 0; i < keys.length; i++) originalSpellKeys[i] = keys[i].getKey();
+        originalDeferrals = new VanillaAlternative[] {
+                config.spell_hotbar_1_defer, config.spell_hotbar_2_defer, config.spell_hotbar_3_defer,
+                config.spell_hotbar_4_defer, config.spell_hotbar_5_defer, config.spell_hotbar_6_defer,
+                config.spell_hotbar_7_defer, config.spell_hotbar_8_defer, config.spell_hotbar_9_defer
+        };
+        originalUseKeyCasting = config.spellHotbarUseKey;
+        originalKeysCaptured = true;
+    }
+
+    private static void restoreSpellEngineKeyCasting() {
+        if (!originalKeysCaptured) return;
+        KeyMapping[] keys = spellEngineKeys();
+        boolean changed = false;
+        for (int i = 0; i < keys.length; i++) {
+            if (!keys[i].getKey().equals(originalSpellKeys[i])) {
+                keys[i].setKey(originalSpellKeys[i]);
+                changed = true;
+            }
+        }
+        if (changed) KeyMapping.resetMapping();
+
+        ClientConfig config = SpellEngineClient.config;
+        if (config != null) {
+            config.spell_hotbar_1_defer = originalDeferrals[0];
+            config.spell_hotbar_2_defer = originalDeferrals[1];
+            config.spell_hotbar_3_defer = originalDeferrals[2];
+            config.spell_hotbar_4_defer = originalDeferrals[3];
+            config.spell_hotbar_5_defer = originalDeferrals[4];
+            config.spell_hotbar_6_defer = originalDeferrals[5];
+            config.spell_hotbar_7_defer = originalDeferrals[6];
+            config.spell_hotbar_8_defer = originalDeferrals[7];
+            config.spell_hotbar_9_defer = originalDeferrals[8];
+            config.spellHotbarUseKey = originalUseKeyCasting;
+        }
+        originalKeysCaptured = false;
+    }
+
+    private static KeyMapping[] spellEngineKeys() {
+        return new KeyMapping[] {
+                Keybindings.spell_hotbar_1, Keybindings.spell_hotbar_2, Keybindings.spell_hotbar_3,
+                Keybindings.spell_hotbar_4, Keybindings.spell_hotbar_5, Keybindings.spell_hotbar_6,
+                Keybindings.spell_hotbar_7, Keybindings.spell_hotbar_8, Keybindings.spell_hotbar_9
+        };
     }
 
     // ------------------------------------------------------------------------------------
